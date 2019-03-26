@@ -1,0 +1,428 @@
+配置nginx实现PHP页面的解析 
+
+LAMP			Linux+Apache+MySQL+PHP 
+
+LNMP(LEMP)		Linux+Nginx+MySQL+PHP 
+
+	nginx --- fastCGI(反向代理) --- php (php-fpm)
+	
+		php-fpm： 独立的应用程序
+
+
+1　安装nginx　(略)
+
+2  安装通用二进制格式MySQL (略)
+
+3  安装PHP
+
+[root@nginx ~]# yum localinstall -y --nogpgcheck libmcrypt-2.5.8-9.el6.x86_64.rpm libmcrypt-devel-2.5.8-9.el6.x86_64.rpm mcrypt-2.6.8-10.el6.x86_64.rpm mhash-devel-0.9.9.9-3.el6.x86_64.rpm mhash-0.9.9.9-3.el6.x86_64.rpm 
+
+[root@nginx php-5.6.27]# yum install -y libxml2-devel bzip2-devel
+
+[root@nginx ~]# tar xzf php-5.6.27.tar.gz 
+[root@nginx ~]# cd php-5.6.27
+[root@nginx php-5.6.27]# ./configure --prefix=/usr/local/php --with-mysql=/usr/local/mysql --with-opennetstatl --with-mysqli=/usr/local/mysql/bin/mysql_config --enable-mbstring --with-freetype-dir --with-jpeg-dir --with-png-dir --with-zlib  --with-libxml-dir=/usr --enable-xml --enable-sockets --enable-fpm --with-mcrypt --with-config-file-path=/etc --with-config-file-scan-dir=/etc/php.d --with-bz2
+[root@nginx php-5.6.27]# make && make install
+
+
+复制php的配置文件 
+[root@nginx php-5.6.27]# cp php.ini-production /etc/php.ini
+
+
+复制php-fpm的配置文件 
+
+[root@nginx php-5.6.27]# cd /usr/local/php/etc/
+[root@nginx etc]# ls
+pear.conf  php-fpm.conf.default
+[root@nginx etc]# cp php-fpm.conf.default php-fpm.conf
+
+
+复制php-fpm的启动脚本 
+
+[root@nginx fpm]# pwd
+/root/php-5.6.27/sapi/fpm
+[root@nginx fpm]# cp init.d.php-fpm /etc/init.d/php-fpm
+[root@nginx fpm]# chmod a+x /etc/init.d/php-fpm
+[root@nginx fpm]# chkconfig --add php-fpm
+[root@nginx fpm]# chkconfig --list php-fpm
+php-fpm        	0:关闭	1:关闭	2:启用	3:启用	4:启用	5:启用	6:关闭
+[root@nginx fpm]# 
+
+
+
+编辑/usr/local/php/etc/php-fpm.conf配置文件 
+
+# vim /usr/local/php/etc/php-fpm.conf 
+
+pm.max_children = 150
+pm.start_servers = 8
+pm.min_spare_servers = 8
+pm.max_spare_servers = 10
+pid=/usr/local/php/var/run/php-fpm.pid
+user=nginx
+group=nginx 
+
+# /etc/init.d/php-fpm start
+Starting php-fpm  done
+
+# netstat -tnlp | grep php-fpm
+tcp        0      0 127.0.0.1:9000              0.0.0.0:*                   LISTEN      15457/php-fpm   
+
+
+整合nginx和php 
+
+编辑nginx配置文件，去掉如下配置的注释：
+
+location ~ \.php$ {
+            root           /web/htdocs;
+            fastcgi_panetstat   127.0.0.1:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;
+            include        fastcgi_params;
+}
+		
+编辑/usr/local/nginx/conf/fastcgi_params文件，并将内容修改为如下内容，配置fastcgi参数：
+
+fastcgi_param  GATEWAY_INTERFACE  CGI/1.1;
+fastcgi_param  SERVER_SOFTWARE	  nginx;
+fastcgi_param  QUERY_STRING	  $query_string;
+fastcgi_param  REQUEST_METHOD	  $request_method;
+fastcgi_param  CONTENT_TYPE	  $content_type;
+fastcgi_param  CONTENT_LENGTH	  $content_length;
+fastcgi_param  SCRIPT_FILENAME	  $document_root$fastcgi_script_name;
+fastcgi_param  SCRIPT_NAME	  $fastcgi_script_name;
+fastcgi_param  REQUEST_URI	  $request_uri;
+fastcgi_param  DOCUMENT_URI	  $document_uri;
+fastcgi_param  DOCUMENT_ROOT	  $document_root;
+fastcgi_param  SERVER_PROTOCOL    $server_protocol;
+fastcgi_param  REMOTE_ADDR	  $remote_addr;
+fastcgi_param  REMOTE_PORT	  $remote_port;
+fastcgi_param  SERVER_ADDR	  $server_addr;
+fastcgi_param  SERVER_PORT	  $server_port;
+fastcgi_param  SERVER_NAME	  $server_name;
+
+
+编辑nginx配置文件，指定php首页
+ 
+location / {
+    root   html;
+    index  index.php index.html index.htm;
+}
+
+
+测试LNMP平台是否工作正常：
+
+测试1： 测试nginx与PHP 
+
+<?php
+  phpinfo();
+?>
+
+
+测试2： 测试php与MySQL 
+
+<?php
+  $link=mysql_connect("localhost","root","");
+  if($link)
+    echo "ok!!!";
+  else
+    echo "fail!!!!!!!";
+  mysql_close();
+?>
+
+
+
+
+部署xcache组件加速PHP解析动态页面的效率 
+
+
+xcache：在同一个PHP服务器，为多个进程缓存同一个opcode
+
+安装xcache-2.0.0，加速php解析
+
+# yum install -y m4 autoconf 
+[root@nginx ~]# tar zxf xcache-3.2.0.tar.gz 
+[root@nginx ~]# cd xcache-3.2.0
+生成configure配置程序
+# /usr/local/php/bin/phpize
+Configuring for:
+PHP Api Version:         20090626
+Zend Module Api No:      20090626
+Zend Extension Api No:   220090626
+# ./configure --enable-xcache --with-php-config=/usr/local/php/bin/php-config 
+# make && make install 
+
+安装完毕后，有如下提示：
+Installing shared extensions:     /usr/local/php/lib/php/extensions/no-debug-non-zts-20090626/
+
+编辑php.ini，整合php与xcache
+
+将xcache提供的样例配置导入php.ini 
+# mkdir /etc/php.d
+[root@nginx xcache-3.2.0]# pwd
+/root/xcache-3.2.0
+# cp xcache.ini /etc/php.d/
+
+编辑/etc/php.d/xcache.ini，找到zend_extension开头的行，修改为如下内容：
+extension = /usr/local/php/lib/php/extensions/no-debug-non-zts-20131226/xcache.so
+
+
+重新启动php-fpm 
+/etc/init.d/php-fpm restart 
+
+通过浏览器再次浏览php页面，在页面中可以找到关于xcache特性说明，表明成功 
+
+
+
+
+=====================================================================
+
+
+LNMP(跨服务器)
+
+1、安装nginx(略)
+
+2、安装通用二进制MySQL
+
+[root@mysql ~]# rpm -qa | grep mariadb
+mariadb-libs-5.5.44-2.el7.centos.x86_64
+ 
+[root@mysql ~]# rpm -e --nodeps mariadb-libs
+
+
+[root@mysql ~]# mkdir -p /mydata/data
+[root@mysql ~]# useradd mysql
+[root@mysql ~]# chown -R mysql.mysql /mydata/data/
+
+
+[root@mysql ~]# tar xf mysql-5.7.17-linux-glibc2.5-x86_64.tar.gz -C /usr/local/
+[root@mysql local]# mv  /usr/local/mysql-5.7.17-linux-glibc2.5-x86_64/ /usr/local/mysql
+[root@mysql local]# chown -R root.mysql /usr/local/mysql/*
+
+[root@mysql ~]# /usr/local/mysql/bin/mysqld --initialize --user=mysql --basedir=/usr/local/mysql --datadir=/mydata/data
+
+
+[root@mysql support-files]# pwd
+/usr/local/mysql/support-files
+[root@mysql support-files]# cp my-default.cnf /etc/my.cnf
+
+[root@mysql support-files]# vim /etc/my.cnf 
+
+basedir=/usr/local/mysql
+datadir=/mydata/data
+port=3306
+server_id=103
+log_bin=mysql-bin
+socket=/tmp/mysql.sock
+
+
+[root@mysql support-files]# pwd
+/usr/local/mysql/support-files
+[root@mysql support-files]# cp mysql.server /etc/init.d/mysqld
+[root@mysql support-files]# chmod a+x /etc/init.d/mysqld
+[root@mysql support-files]# chkconfig --add mysqld
+[root@mysql support-files]# chkconfig mysqld on
+
+[root@mysql ~]# /etc/init.d/mysqld start
+ 
+[root@mysql ~]# netstat -antp | grep mysqld
+
+
+[root@mysql ~]# tail -n 1 /etc/profile
+	export PATH=$PATH:/usr/local/mysql/bin
+	
+[root@mysql ~]# source /etc/profile
+
+[root@mysql ~]# mysqladmin -u root -p password "redhat"
+
+
+
+
+
+
+
+
+3、安装PHP(php-fpm)
+
+1) 安装mcrypt, mhash数据加密认证组件
+
+[root@php01 ~]# yum install -y libmcrypt-2.5.8-13.el7.x86_64.rpm libmcrypt-devel-2.5.8-13.el7.x86_64.rpm mcrypt-2.6.8-11.el7.x86_64.rpm mhash-0.9.9.9-10.el7.x86_64.rpm mhash-devel-0.9.9.9-10.el7.x86_64.rpm 
+
+2) 编译安装PHP
+
+[root@php01 ~]# tar zxf php-5.6.27.tar.gz 
+[root@php01 ~]# cd php-5.6.27/
+
+[root@php01 php-5.6.27]# ./configure --prefix=/usr/local/php --with-mysql --with-mysqli --with-opennetstatl --enable-mbstring --with-freetype-dir --with-jpeg-dir --with-png-dir --with-zlib  --with-libxml-dir=/usr --enable-xml --enable-sockets --enable-fpm --with-mcrypt --with-config-file-path=/etc --with-config-file-scan-dir=/etc/php.d --with-bz2
+
+	--enable-fpm：以fpm的方式安装php (独立的应用程序)
+
+
+
+[root@php01 php-5.6.27]# make && make install 
+
+3) 复制php加载模块的配置文件
+
+[root@php01 php-5.6.27]# cp php.ini-production /etc/php.ini
+
+
+4) 复制php-fpm的配置文件 
+
+[root@php01 php]# cd /usr/local/php/etc/
+[root@php01 etc]# ls
+pear.conf  php-fpm.conf.default
+[root@php01 etc]# cp php-fpm.conf.default php-fpm.conf
+[root@php01 etc]# ls
+pear.conf  php-fpm.conf  php-fpm.conf.default
+
+
+5) 复制php-fpm的启动脚本 
+
+[root@php01 fpm]# pwd
+/root/php-5.6.27/sapi/fpm
+
+[root@php01 fpm]# cp init.d.php-fpm /etc/init.d/php-fpm
+[root@php01 fpm]# chmod a+x /etc/init.d/php-fpm
+[root@php01 fpm]# chkconfig --add php-fpm
+[root@php01 fpm]# chkconfig php-fpm on
+[root@php01 fpm]# chkconfig --list php-fpm
+
+
+6) 编辑php-fpm.conf配置文件 
+
+[root@php01 ~]# useradd nginx
+
+[root@php01 ~]# vim /usr/local/php/etc/php-fpm.conf 
+
+	pm.max_children = 150
+	pm.start_servers = 8
+	pm.min_spare_servers = 8
+	pm.max_spare_servers = 10
+	pm.max_requests = 500
+	pid=/usr/local/php/var/run/php-fpm.pid
+	listen = 192.168.122.103:9000
+	
+	user = nginx
+	group = nginx
+
+
+
+7) 启动php-fpm服务 
+
+[root@php01 ~]# /etc/init.d/php-fpm start
+
+[root@php01 ~]# netstat -antp | grep :9000
+
+
+8) 创建网页目录
+
+[root@php01 ~]# mkdir -p /web/app
+
+
+
+4、编辑nginx的配置文件，整合Nginx和PHP 
+
+[root@nginx ~]# vim /usr/local/nginx/conf/nginx.conf
+
+        location / {
+            root   /web/app;
+            index  index.php index.html index.htm;
+        }
+
+		location ~ \.php$ {
+            root           /web/app;
+            fastcgi_pass   192.168.122.103:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  $document_root$fastcgi_script_name;
+            include        fastcgi_params;
+        }
+
+[root@nginx ~]# mkdir -p /web/app
+
+
+
+5、测试 
+
+1) 测试nginx与php正常
+
+[root@php01 app]# cat /web/app/a.php 
+
+	<?php
+		phpinfo();
+	?>
+
+http://192.168.122.101/a.php
+
+2) 测试PHP与MySQL 
+
+[root@php01 app]# cat /web/app/b.php 
+<?php
+  $link=mysql_connect("192.168.122.102","phpuser","redhat");
+  if($link) 
+    echo "ok!!!!";
+  else
+    echo "fail!!!!!";
+?>
+
+在MySQL服务器上创建phpuser用户
+
+mysql> GRANT all ON *.* TO "phpuser"@"192.168.122.103" IDENTIFIED BY "redhat";
+
+mysql> FLUSH PRIVILEGES;
+
+
+http://192.168.122.101/b.php
+
+
+
+
+
+
+
+
+部署xcache组件加速PHP解析动态页面的效率 
+
+
+xcache：在同一个PHP服务器，为多个进程缓存同一个opcode
+
+
+[root@nginx ~]# tar zxf xcache-3.2.0.tar.gz 
+[root@nginx ~]# cd xcache-3.2.0
+生成configure配置程序
+# /usr/local/php/bin/phpize
+Configuring for:
+PHP Api Version:         20090626
+Zend Module Api No:      20090626
+Zend Extension Api No:   220090626
+
+# ./configure --enable-xcache --with-php-config=/usr/local/php/bin/php-config 
+# make && make install 
+
+错误1：Cannot find autoconf
+
+解决办法：
+
+[root@php01 xcache-3.2.0]# yum install -y autoconf 
+
+
+
+
+安装完毕后，有如下提示：
+
+Installing shared extensions:     /usr/local/php/lib/php/extensions/no-debug-non-zts-20090626/
+
+
+编辑php.ini，整合php与xcache
+
+编辑/etc/php.ini，找到extension开头的行，修改为如下内容：
+
+extension = /usr/local/php/lib/php/extensions/no-debug-non-zts-20131226/xcache.so
+
+
+重新启动php-fpm 
+/etc/init.d/php-fpm restart 
+
+通过浏览器再次浏览php页面，在页面中可以找到关于xcache特性说明，表明成功 
+
+
+=========================================================================================================

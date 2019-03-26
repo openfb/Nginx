@@ -1,0 +1,138 @@
+rsync + inotify 
+
+	rsync：同步文件 
+	inotify：监控文件变化 
+
+
+环境描述：
+
+	192.168.122.101			部署rsync服务，接收文件
+	192.168.122.171			提供文件(inotify)
+	
+	同步目录：/webdata
+	
+
+1、关闭防火墙、SELinux
+
+2、确保每台安装rsync 
+
+[root@nginx_server ~]# rpm -q rsync
+rsync-3.0.9-18.el7.x86_64
+
+
+3、在101部署rsync服务 
+
+	1) 编辑配置文件 
+
+	[root@nginx_server ~]# cat /etc/rsyncd.conf 
+
+
+		uid = root
+		gid = root
+		use chroot = yes
+		max connections = 10
+		pid file = /var/run/rsyncd.pid
+		log file = /var/log/rsyncd.log
+		port = 873
+		address = 192.168.122.101
+
+		[testdir]
+		path = /webdata
+		comment = test dir
+		read only = no
+		auth users = martin
+		secrets file = /etc/rsyncd.pass
+		
+	[root@nginx_server ~]# mkdir /webdata
+
+
+	2) 创建保存认证用户、密码文件 
+	
+		[root@nginx_server ~]# cat /etc/rsyncd.pass
+		martin:123
+		[root@nginx_server ~]# chmod 600 /etc/rsyncd.pass
+
+	3) 启动rsync服务 
+	
+		[root@nginx_server ~]# rsync --daemon
+		[root@nginx_server ~]# netstat -antp | grep rsync
+		tcp        0      0 192.168.122.101:873     0.0.0.0:*               LISTEN      3542/rsync          
+		[root@nginx_server ~]# ps -elf | grep rsync
+		5 S root      3542     1  0  80   0 - 28663 poll_s 17:09 ?        00:00:00 rsync --daemon
+
+		================重启rsync==============
+		[root@nginx_server ~]# cat /var/run/rsyncd.pid 
+		3542
+		[root@nginx_server ~]# kill 3542
+		[root@nginx_server ~]# netstat -antp | grep rsync
+		[root@nginx_server ~]# rm -rf /var/run/rsync.pid
+		[root@nginx_server ~]# rsync --daemon
+
+		=======================================
+
+		
+		
+4、配置122.171
+
+1) 测试连接192.168.122.101的rsync服务 
+
+	a. 创建密码文件 
+
+		[root@db_server ~]# cat /etc/rsyncd.pass
+		123
+		[root@db_server ~]# chmod 600 /etc/rsyncd.pass
+
+	b. 测试文件同步 
+	
+		[root@db_server ~]# rsync -av --password-file=/etc/rsyncd.pass  /tmp/b.txt martin@192.168.122.101::testdir
+
+		
+2) 创建目录 
+
+	[root@db_server ~]# mkdir /webdata
+		
+		
+3) 安装inotify监控/webdata目录变化 
+
+
+	a. 安装inotify软件 
+		
+		[root@db_server ~]# tar xf inotify-tools-3.14.tar.gz 
+		[root@db_server ~]# cd inotify-tools-3.14/
+		[root@db_server inotify-tools-3.14]# ./configure --prefix=/usr/local/inotify && make && make install 
+			
+		[root@db_server ~]# tail -n 1 /etc/profile
+			export PATH=$PATH:/usr/local/mysql/bin:/usr/local/inotify/bin
+
+
+	b. 测试inotifywait命令使用 
+
+		[root@db_server ~]# inotifywait -mrq -e create,move,modify,delete /webdata/
+
+
+4) 编写脚本，实现同步 
+
+	[root@db_server ~]# cat inotify.sh 
+		#!/bin/bash
+		INOTIFY_CMD="inotifywait -mrq -e modify,create,attrib,move,delete /webdata"
+		RSYNC_CMD="rsync -a --delete --password-file=/etc/rsyncd.pass /webdata/ martin@192.168.122.101::testdir/"
+
+		$INOTIFY_CMD | while read DIRECTORY EVENT FILE
+		do
+		   $RSYNC_CMD
+		   echo "$(date +%F_%T)  $DIRECTORY   $FILE   $EVENT" >> /tmp/rsync.log
+		done
+
+		
+		
+5、测试同步
+
+	在192.168.122.171上运行脚本，并在另一个终端中创建文件，测试同步 
+	
+	
+	
+		
+		
+		
+
+

@@ -1,0 +1,866 @@
+nginx 
+
+		异步非阻塞IO
+		基于epoll事件驱动模型实现
+
+	作用：
+		1、部署网站服务器
+			高效率、应对高并发连接 ；解决C10K问题
+			
+		2、反向代理
+			对web服务、mail服务做反向代理 
+				承载更多的客户端连接
+				一定隐藏后端服务器的信息
+				缓存 
+		
+
+nginx特性： 
+
+	轻量级、高性能HTTP服务器
+	高性能的reverse proxy反向代理服务器 
+	基于模块化设计 
+	在线升级、在线添加额外的功能模块 (nginx热部署)
+	基于EPOLL事件驱动模型 
+	带缓存的日志写操作
+	URL重写(rewrite)模块　
+	支持验证HTTP referer,实现反倒链机制 
+	支持sendfile，将数据在内核中直接封装响应客户端，不需要将数据复制到进程地址空间
+	10000个非活跃的HTTP KEEPALIVE连接仅占用2.5M内存
+	支持缓存功能		
+
+
+
+同步机制和异步机制
+
+	用于描述网络中的主机通信的模式
+	同步机制
+		发送方发送请求后，需要等待接收方回应，才会继续发送下一个请求
+	异步机制
+		发送方发送请求后，不等待接收文回应，继续发送下一个请求
+		
+		
+阻塞和非阻塞
+
+	用于描述进程处理IO调用的方式 
+	
+	阻塞机制
+		调用结果返回前，进程会从运行状态切换到挂起状态，待调用结果返回后，进程再次进入就绪状态，获取CPU后继续执行
+	非阻塞机制
+		调用结果如果不能及时返回，进程也不会进入挂起状态，而是开始处理下一个请求，待调用结果返回时，进程暂停运行该任务，开始继续处理上一个任务
+		
+同步阻塞 
+同步非阻塞 
+异步阻塞 
+异步非阻塞 
+	
+
+Nginx的事件驱动模型 
+
+	Nginx服务器接收和处理客户端请求时，就是基于事件驱动机制的
+	
+	SELECT
+	
+		Linux, windows平台支持的事件驱动模型
+		首先，创建所关注事件的描述符集合。对于每一个描述符，需要关注其上面的读事件，写事件，异常事件；所以要创建三类事件描述符集合 
+		调用底层以的select()函数，等待事件发生
+		轮询所有事件描述符，检查是否有事件发生，如果有，就进行处理 
+		
+	POLL
+		Linux平台支持的事件驱动模型，2.1.23版本内核中引入 
+		和select一样，需要创建 一个关注事件的描述符集合，等待事件发生，轮询描述符集合，检测有没有事件发生，如果有，就执行 
+		不一样的是，select需要创建三类描述符集合，而poll只需要创建一类集合，在每个描述符下分别创建读、写、异常事件，最后轮询时，可同时轮询
+		
+	epoll(RHEL, CentOS)
+		Linux 2.5.44内核后引入 
+		把描述符列表的管理交由内核负责，一旦有某种事件发生，内核把发生事件的描述符列表通知给进程，避免轮询减少系统开销
+	
+	kqueue 
+		支持BSD系列平台的高效事件驱动模型 
+		
+	/dev/poll 
+	
+		支持UNIX衍生平台(unix, AIX, hp-unix)的高效事件驱动模型 
+		
+	eventport 
+	
+		支持Solaris 10及以上版本平台的高效事件驱动模型 
+
+
+
+Nginx服务器架构 ：
+
+
+Nginx启动时会启动一个主进程master及多个子进程worker；配置缓存时还会启动cache load和cache manager进程。所有进程以"共享内存"机制完成进程间通信；master进程以特权用户运行，其他进程以非特权用户运行
+
+master主进程主要完成如下工作：
+
+1、读取并验证配置文件 
+2、创建、绑定、及关闭套接字socket(IP:port)
+3、启动、终止及维护worker进程的个数
+4、无须中止服务而重新配置工作特性
+5、控制非中断式程序升级，启用新的二进制程序并在需要时回滚至老版本
+6、重新打开日志文件
+7、编译嵌入式perl脚本
+
+worker进程主要完成如下工作：
+
+1、接收、传入并处理客户端的连接
+2、提供反向代理及过滤功能
+3、IO调用，获取响应数据 
+4、与后端服务器通信，接收后端服务器处理结果 
+5、数据缓存、访问缓存索引、查询和调用缓存数据 
+6、发送请求结果，响应客户端请求
+7、接收主程序指令，比如重启、退出、升级等
+
+cache load进程主要完成的工作：
+
+1、检查缓存存储中的缓存对象
+2、使用缓存元数据建立内存数据库
+
+cache manager进程的主要工作：
+
+1、缓存的失效及过期检验
+
+
+
+
+Nginx软件下载：
+
+	http://nginx.org/
+
+
+
+
+Nginx软件安装 
+
+[root@nginx nginx-1.11.10]# yum install -y gcc
+
+[root@nginx ~]# useradd nginx
+
+[root@nginx ~]# mkdir -p /var/tmp/nginx/{client,proxy,fastcgi,uwsgi,scgi}
+
+
+[root@nginx ~]# tar zxf nginx-1.11.10.tar.gz 
+[root@nginx ~]# cd nginx-1.11.10/
+[root@nginx nginx-1.11.4]# ./configure \
+--prefix=/usr/local/nginx \
+--user=nginx \
+--group=nginx \
+--with-http_ssl_module \
+--with-http_flv_module \
+--with-http_stub_status_module \
+--with-http_gzip_static_module \
+--http-client-body-temp-path=/var/tmp/nginx/client \
+--http-proxy-temp-path=/var/tmp/nginx/proxy \
+--http-fastcgi-temp-path=/var/tmp/nginx/fastcgi \
+--http-uwsgi-temp-path=/var/tmp/nginx/uwsgi \
+--http-scgi-temp-path=/var/tmp/nginx/scgi \
+--with-pcre \
+--with-file-aio \
+--with-http_secure_link_module \
+--with-threads \
+
+
+
+错误1：
+
+./configure: error: the HTTP rewrite module requires the PCRE library.
+
+[root@nginx nginx-1.11.10]# yum install -y pcre-devel
+
+
+错误2：
+
+./configure: error: SSL modules require the OpenSSL library.
+
+[root@nginx nginx-1.11.10]# yum install -y openssl-devel
+
+
+[root@nginx nginx-1.11.10]# make && make install
+
+
+
+nginx目录介绍
+
+	/usr/local/nginx/conf     nginx.conf	配置文件
+	/usr/local/nginx/html	  默认网页目录
+	/usr/local/nginx/logs	  日志
+	/usr/local/nginx/sbin	  nginx二进制程序
+
+
+启动nginx
+
+[root@nginx ~]# /usr/local/nginx/sbin/nginx 
+
+[root@nginx ~]# ss -antp | grep nginx
+LISTEN     0      128          *:80                       *:*                   users:(("nginx",pid=7691,fd=6),("nginx",pid=7690,fd=6))
+
+[root@nginx ~]# ps aux | grep nginx
+root      7690  0.0  0.1  47552  1116 ?        Ss   11:20   0:00 nginx: master process /usr/local/nginx/sbin/nginx
+nginx     7691  0.0  0.2  50076  2220 ?        S    11:20   0:00 nginx: worker process
+root      7708  0.0  0.0 112660   932 pts/0    S+   11:21   0:00 grep --color=auto nginx
+
+
+设置nginx开机自启动 
+
+[root@nginx ~]# tail -1 /etc/rc.d/rc.local
+/usr/local/nginx/sbin/nginx
+[root@nginx ~]# chmod a+x /etc/rc.d/rc.local
+
+
+nginx命令常用选项：
+
+1、查看nginx软件版本 
+
+[root@nginx ~]# nginx -v
+nginx version: nginx/1.11.10
+[root@nginx ~]# 
+
+2、显示nginx版本、配置选项
+
+[root@nginx ~]# nginx -V
+nginx version: nginx/1.11.10
+built by gcc 4.8.5 20150623 (Red Hat 4.8.5-4) (GCC) 
+built with OpenSSL 1.0.1e-fips 11 Feb 2013
+TLS SNI support enabled
+configure arguments: --prefix=/usr/local/nginx --user=nginx --group=nginx --with-http_ssl_module --with-http_flv_module --with-http_stub_status_module --with-http_gzip_static_module --http-client-body-temp-path=/var/tmp/nginx/client --http-proxy-temp-path=/var/tmp/nginx/proxy --http-fastcgi-temp-path=/var/tmp/nginx/fastcgi --http-uwsgi-temp-path=/var/tmp/nginx/uwsgi --http-scgi-temp-path=/var/tmp/nginx/scgi --with-pcre --with-file-aio --with-http_secure_link_module
+
+
+3、检测配置文件语法
+
+[root@nginx ~]# nginx -t
+nginx: the configuration file /usr/local/nginx/conf/nginx.conf syntax is ok
+nginx: configuration file /usr/local/nginx/conf/nginx.conf test is successful
+[root@nginx ~]# 
+
+
+4、发送信号
+
+[root@nginx ~]# nginx -s stop
+
+[root@nginx ~]# nginx -s reload			>>>重新加载配置文件
+
+
+
+
+
+
+
+Nginx配置文件语法 --------- /usr/local/nginx/conf/nginx.conf 
+
+1、全局配置
+
+1)
+
+# user nobody			>>>运行nginx工作进程的用户
+
+
+2) 启动worker进程的数量；
+	如果是CPU密集型，如SSL及压缩应用，worker数量与CPU个数一致；
+	如果是IO密集型，如响应大量给客户端 ，worker进程个数为CPU个数的2倍
+worker_processes  1;		
+
+3) 指定错误日志名称、及级别
+
+#error_log  logs/error.log  notice;
+
+4) 指定pid文件 
+
+pid        logs/nginx.pid;
+
+
+2、事件驱动模型配置
+
+events {
+	...
+	...
+}
+
+1) 指定事件驱动模型
+	
+	use epoll;
+	
+2) 指定每个工作进程能处理的最大连接数
+
+	worker_connection 1024;
+
+
+
+3、网站服务配置
+
+http {
+
+	server {
+	
+		...
+		
+		location URI地址 {		//匹配客户端访问图片的请求
+			...
+		}
+		
+		location {				//匹配客户端访问广告的请求
+			....
+		}
+	
+		location {				//匹配客户端访问音乐的请求
+			....
+		}
+	
+	
+	}
+	
+	
+	server {
+	
+	
+	
+	}
+
+
+}
+
+server{ }：虚拟主机
+
+location{ }：根据uri地址匹配客户端的访问请求，以不同的方式响应客户端 
+
+
+
+
+
+1) 定义访问日志格式main/combined
+
+	log_format  main  	'$remote_addr - $remote_user [$time_local] "$request" '
+						'$status $body_bytes_sent "$http_referer" '
+						'"$http_user_agent" "$http_x_forwarded_for"';
+
+$remote_addr：		客户端地址
+$remote_user：		客户端用户
+$time_local： 		访问时间 
+$request：	   		HTTP请求(方法、HTTP版本、URI地址)
+		
+$status				HTTP状态码
+$body_bytes_sent	HTTP请求报文大小 
+$http_referer		超链接地址
+
+$http_user_agent		客户端浏览器类型
+$http_x_forwarded_for	客户端地址	
+	
+
+
+2) 指定访问日志的名称、格式
+
+	access_log  logs/access.log  main;
+
+
+3) 启动sendfile, tcp_nopush
+
+    sendfile        on;
+    tcp_nopush     on;
+
+
+4) 设置长连接的超时时间、请求次数
+
+    keepalive_timeout  65;
+    keepalive_requests 100;
+
+
+5) 启动压缩特性
+
+	gzip  on;
+
+
+6) 设置虚拟主机监听的端口
+
+	listen 80
+
+7) 设置虚拟主机的主机名
+	
+	server_name  www.a.org a.org;
+
+8) 定义客户端请求中的URI地址
+
+	location URI地址 {
+		响应方法
+	}
+
+	location / {
+		root   html;						>>>定义网页目录
+        index  index.html index.htm;		>>>指定首页名称
+    }
+
+
+示例1：客户端输入主机名访问，可看到 /web/htdocs目录下的页面
+
+        location / {
+            root   /web/htdocs;
+            index  index.html index.htm;
+        }
+
+
+示例2：http://192.168.122.101/bbs , 可看到/web/bbs目录下的页面
+
+        location /bbs {
+            root   /web;
+            index  index.html index.htm;
+        }
+
+		
+示例3：定义错误页面
+
+		error_page  404             /404.html;
+		location = /404.html {
+			root html;
+		}
+
+		
+
+
+虚拟主机配置 
+
+	类型：
+	
+		基于主机名
+		基于IP地址
+
+
+示例：配置虚拟主机
+
+基于主机名： 
+	www.a.org, a.org 		网页：/a.org  		日志：/var/log/nginx 
+	www.b.org, b.org 		网页：/b.org  		日志：/var/log/nginx 
+	
+基于IP地址： 
+	www.c.org	c.org 		网页：/c.org 		日志: /var/log/nginx 
+	www.d.org 	d.org 		网页：/d.org 		日志：/var/log/nginx 
+
+	
+	
+	
+配置www.a.org：
+
+    server {
+        listen       80;
+        server_name  www.a.org a.org;
+
+        error_log /usr/local/nginx/logs/a.org/error.log error;
+        access_log /usr/local/nginx/logs/a.org/access.log main;
+
+        location / {
+            root   /a.org;
+            index  index.html index.htm;
+        }
+    }
+
+配置www.b.org：
+
+[root@nginx nginx]# cat /usr/local/nginx/conf.d/b.org.conf 
+server{
+   listen 80;
+   server_name www.b.org b.org;
+
+   error_log /usr/local/nginx/logs/b.org/err.log error;
+   access_log /usr/local/nginx/logs/b.org/access.log main;
+
+   location / {
+	root /b.org;
+	index index.html;
+   }
+}
+
+编辑nginx.conf
+
+[root@nginx nginx]# vim /usr/local/nginx/conf/nginx.conf
+
+    include /usr/local/nginx/conf.d/*.conf;
+
+
+
+[root@nginx_server ~]# ifconfig eth0:0 192.168.122.111/24
+[root@nginx_server ~]# ifconfig eth0:1 192.168.122.222/24
+	
+	
+	
+	
+	
+	
+配置基于SSL的虚拟主机：	
+	
+	
+
+1) 生成证书及密钥文件  
+
+[root@nginx ~]# mkdir /usr/local/nginx/ssl
+
+[root@nginx ~]# openssl genrsa 1024 > /usr/local/nginx/ssl/server.key			>>> 生成一个密钥 
+
+[root@nginx ~]# openssl req -new -key /usr/local/nginx/ssl/server.key > /usr/local/nginx/ssl/server.csr	>>> 生成证书申请 
+
+[root@nginx ~]# openssl req -x509 -days 365 -key /usr/local/nginx/ssl/server.key -in /usr/local/nginx/ssl/server.csr > /usr/local/nginx/ssl/server.crt			>>>签发证书
+	
+2) 创建目录 
+	
+[root@nginx ~]# mkdir /bj
+[root@nginx ~]# echo "bj ssl web" > /bj/index.html
+[root@nginx ~]# 
+[root@nginx ~]# mkdir /usr/local/nginx/logs/bj
+	
+3) 编辑nginx.conf文件 
+
+[root@nginx ~]# vim /usr/local/nginx/conf/nginx.conf
+
+ server {
+        listen       443 ssl;
+        server_name  www.bj.com;
+
+        ssl_certificate      /usr/local/nginx/ssl/server.crt;
+        ssl_certificate_key  /usr/local/nginx/ssl/server.key;
+
+        location / {
+            root   /bj;
+            index  index.html index.htm;
+        }
+    }
+
+[root@nginx ~]# nginx -t
+[root@nginx ~]# nginx -s reload
+	
+[root@nginx ~]# ss -antp | grep nginx
+
+4) 测试访问
+
+
+	
+	
+	
+	
+	
+
+客户端认证模块
+
+	基于客户端IP地址
+	基于用户名、密码
+
+
+基于客户端IP地址进行访问控制 
+
+	allow [ ip | CIDR | all ]
+	deny [ ip | CIDR | all ]
+	
+默认访问行为是允许所有客户端访问 
+
+1) 明确禁止10.1.1.1访问
+
+	deny 10.1.1.1 
+	
+2) 仅允许10.1.1.1访问 
+	
+	allow 10.1.1.1
+	deny all 
+
+
+
+基于用户名、密码认证访问 
+
+location  /  {
+	auth_basic            "Restricted";			
+	auth_basic_user_file  conf/htpasswd;
+}
+
+示例：客户端访问www.b.org时，需要进行用户名、密码认证(martin)
+
+1) 创建存放用户名、密码的文件  
+
+[root@nginx ~]# htpasswd -c /usr/local/nginx/conf/.webuser martin
+
+2) 编辑配置文件，开启认证 
+
+[root@nginx ~]# vim /usr/local/nginx/conf.d/b.org.conf 
+
+   location / {
+        root /b.org;
+        index index.html;
+        auth_basic "Restricted Page: ";
+        auth_basic_user_file /usr/local/nginx/conf/.webuser;
+   }
+
+
+
+   
+nginx默认网页目录无index.html首页时，显示为403权限拒绝 
+
+如果要在某虚拟机下搭建下载站，可以启用autoindex
+
+location / {
+	root /c.org;
+	autoindex on;
+}   
+   
+   
+   
+   
+
+   
+   
+   
+   
+ 
+stub_status模块的使用
+
+	http://www.a.org/status 
+	
+
+[root@nginx ~]# vim /usr/local/nginx/conf/nginx.conf
+
+        location /status {
+            stub_status on;
+            access_log off;
+            allow 192.168.122.1;
+            deny all;
+        }
+
+http://www.a.org/status		
+		
+
+Active connections: 4 		当前服务器的并发连接数 
+
+server accepts handled requests
+ 10 10 36 		已经接受的连接数		已经处理的连接数		已经处理的请求数
+
+Reading: 0 Writing: 1 Waiting: 3 
+
+Reading： nginx正在读取其报文首部的连接数
+Writing： nginx正在读取其报文主体的连接数、或者正在处理请求的请求个数以及正在响应客户端的连接个数
+Waiting： 长连接中保持活动连接的连接个数(Reading+Writing)
+
+
+
+Nginx平滑升级
+
+=============检测web服务请求的脚本====================
+
+[root@node01 ~]# cat webcheck.sh
+#!/bin/bash
+#
+while true;do
+code=$(curl -o /dev/null -s -w "%{http_code}" 192.168.122.101"")
+
+if [ $code == 200 ]; then
+  echo "Success.$code" >> /tmp/log.txt
+else
+  echo "Fail $code" >> /tmp/log.txt
+fi
+
+sleep 1
+done
+
+======================================================
+
+1、查看当前nginx软件版本 
+
+[root@node02 ~]# /app/nginx/sbin/nginx -v
+nginx version: nginx/1.12.1
+
+2、查看安装配置参数，以相同的参数安装新版本的nginx
+
+[root@node02 ~]# /app/nginx/sbin/nginx -V
+nginx version: nginx/1.12.1
+built by gcc 4.8.5 20150623 (Red Hat 4.8.5-4) (GCC) 
+configure arguments: --prefix=/app/nginx
+
+
+3、安装新版本nginx，参数与上述查看到的参数相同 
+
+[root@node02 ~]# wget https://nginx.org/download/nginx-1.13.4.tar.gz
+
+[root@node02 ~]# tar xf nginx-1.13.4.tar.gz 
+[root@node02 ~]# cd nginx-1.13.4/
+[root@node02 nginx-1.13.4]# ./configure --prefix=/app/nginx ........
+[root@node02 nginx-1.13.4]# make
+
+==============不需要make install ================
+
+make执行完毕后，在当前目录的objs目录下可查看到新编译出的nginx命令 
+
+[root@node02 nginx-1.13.4]# ls objs/
+autoconf.err  Makefile  nginx  nginx.8  ngx_auto_config.h  ngx_auto_headers.h  ngx_modules.c  ngx_modules.o  src
+[root@node02 nginx-1.13.4]# 
+
+
+4、备份旧的nginx可执行程序，并将新的nginx程序拷贝到安装目录下 
+
+[root@node02 nginx-1.13.4]# mv /app/nginx/sbin/nginx /app/nginx/sbin/nginx.bak
+[root@node02 nginx-1.13.4]# cp objs/nginx /app/nginx/sbin/
+
+
+5、以新的nginx程序启动，通过发送USR2信号完成 
+
+[root@node02 ~]# kill -USR2 $(cat /app/nginx/logs/nginx.pid)
+
+启动后系统中会能两个nginx的主进程(master process)  
+
+[root@node02 ~]# ps aux | grep nginx
+root     18469  0.0  0.0  20480   800 ?        Ss   14:43   0:00 nginx: master process /app/nginx/sbin/nginx
+nobody   18470  0.0  0.1  23008  1364 ?        S    14:43   0:00 nginx: worker process
+root     21070  0.0  0.1  20484  1512 ?        S    14:53   0:00 nginx: master process /app/nginx/sbin/nginx
+nobody   21071  0.0  0.1  22996  1360 ?        S    14:53   0:00 nginx: worker process
+
+旧nginx进程的pid文件会被复制为nginx.pid.oldbin
+
+[root@node02 ~]# ls /app/nginx/logs/
+access.log  error.log  nginx.pid  nginx.pid.oldbin
+
+
+
+6、平缓关闭旧master process产生的worker process 
+
+[root@node02 ~]# kill -WINCH $(cat /app/nginx/logs/nginx.pid.oldbin)
+
+
+7、关闭旧的master process  
+
+[root@node02 ~]# kill $(cat /app/nginx/logs/nginx.pid.oldbin)
+[root@node02 ~]# ps aux | grep nginx
+root     21070  0.0  0.1  20484  1512 ?        S    14:53   0:00 nginx: master process /app/nginx/sbin/nginx
+nobody   21071  0.0  0.1  22996  1360 ?        S    14:53   0:00 nginx: worker process
+
+
+8、验证结果，查看nginx版本
+
+[root@node02 ~]# /app/nginx/sbin/nginx -v
+nginx version: nginx/1.13.4
+
+[root@node02 ~]# /app/nginx/sbin/nginx -V
+nginx version: nginx/1.13.4
+built by gcc 4.8.5 20150623 (Red Hat 4.8.5-4) (GCC) 
+configure arguments: --prefix=/app/nginx
+
+
+
+信号说明：
+
+	USR2  平滑的升级nginx二进制文件
+	WINCH 优雅的关闭worker进程
+
+
+
+
+
+
+
+nginx第三方模块  
+
+
+lua模块 
+
+
+	Lua是一个小巧的脚本语言, 其设计目的是为了嵌入应用程序中，从而为应用程序提供灵活的扩展和定制功能
+
+	应用场景
+
+		游戏开发
+		独立应用脚本
+		Web 应用脚本
+		扩展和数据库插件如：MySQL Proxy 和 MySQL WorkBench
+		安全系统，如入侵检测系统
+
+
+
+一、安装lua解释器   LuaJIT 
+
+	1、安装LuaJIT 
+
+		[root@nginx_server ~]# tar xf LuaJIT-2.0.5.tar.gz 
+		[root@nginx_server ~]# cd LuaJIT-2.0.5/
+		[root@nginx_server LuaJIT-2.0.5]# make install PREFIX=/usr/local/luajit
+
+
+	2、导出LuaJIT的库文件 
+
+		[root@nginx_server ~]# cat /etc/ld.so.conf.d/luajit.conf
+		
+			/usr/local/luajit/lib
+		
+		[root@nginx_server ~]# ldconfig 
+
+
+	3、配置luajit的环境变量
+
+
+		[root@nginx_server luajit-2.0]# tail -n 2 /etc/profile
+			export LUAJIT_LIB=/usr/local/luajit/lib
+			export LUAJIT_INC=/usr/local/luajit/include/luajit-2.0
+			
+		[root@nginx_server luajit-2.0]# source /etc/profile
+	 
+
+	4、测试解释器 
+
+		[root@nginx_server ~]# lua
+		Lua 5.1.4  Copyright (C) 1994-2008 Lua.org, PUC-Rio
+		> 
+		> print("hello lua")
+		hello lua
+		 
+			ctrl + d退出解释器 
+		
+
+
+
+二、安装nginx_lua三方模块
+
+1、 解压缩模块 
+
+	[root@nginx_server ~]# tar xf v0.3.0.tar.gz 
+	[root@nginx_server ~]# tar xf v0.10.10.tar.gz  
+
+
+2、为nginx添加三方模块 
+
+	[root@nginx_server ~]# cd nginx-1.14.2/
+	[root@nginx_server nginx-1.14.2]# ./configure --prefix=/app/nginx --user=nginx --group=nginx --with-http_ssl_module --with-http_flv_module --with-http_stub_status_module --with-http_gzip_static_module --with-pcre --with-file-aio --with-http_secure_link_module --with-threads --http-client-body-temp-path=/var/tmp/nginx/client --http-proxy-temp-path=/var/tmp/nginx/proxy --http-fastcgi-temp-path=/var/tmp/nginx/fastcgi --http-uwsgi-temp-path=/var/tmp/nginx/uwsgi --http-scgi-temp-path=/var/tmp/nginx/scgi --add-module=/root/ngx_devel_kit-0.3.0/ --add-module=/root/lua-nginx-module-0.10.10/
+
+	[root@nginx_server nginx-1.14.2]# make && make install 
+
+
+3、验证模块 
+
+	[root@nginx_server sbin]# ./nginx -V
+
+
+4、创建虚拟主机测试lua模块 
+
+[root@nginx_server conf.d]# cat /app/nginx/conf.d/lua_test.conf 
+
+	server {
+		listen 80;
+		server_name lua.linux.com;
+
+
+		location /test1 {
+			 content_by_lua '
+				 ngx.say("hello lua")
+				 ngx.log(ngx.ERR, "err err")';
+		}
+
+
+		location /test2 {
+			content_by_lua_file "/tmp/test.lua";
+		}
+	}
+
+
+	[root@nginx_server conf.d]# cat /tmp/test.lua 
+	
+		ngx.say("hello lua_xjs")
+
+
+
+5、测试访问 
+
+	# curl lua.linux.com/test1
+	hello lua
+
+	# curl lua.linux.com/test2
+	hello lua_xjs
+
+
